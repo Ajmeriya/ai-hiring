@@ -1,0 +1,76 @@
+flowchart TB
+  %% Final architecture for the AI hiring platform
+
+  subgraph C[Clients]
+    F[Frontend<br/>React / Vite<br/>localhost:3000]
+    R[Recruiter Browser]
+    CAND[Candidate Browser]
+    R --> F
+    CAND --> F
+  end
+
+  subgraph G[Edge Layer]
+    GW[API Gateway<br/>Spring Cloud Gateway<br/>localhost:8080]
+    CORS[CORS only here]
+  end
+
+  subgraph S[Core Spring Services]
+    AUTH[Auth Service<br/>localhost:8083]
+    JOB[Job Service<br/>localhost:8081]
+    APP[Application Service<br/>localhost:8082]
+  end
+
+  subgraph Q[Question Services]
+    APT[Aptitude Question Service<br/>FastAPI<br/>localhost:8086]
+    DSA[DSA / SQL Question Service<br/>FastAPI<br/>localhost:8087]
+  end
+
+  subgraph E[Execution]
+    EXEC[Execution Service<br/>FastAPI<br/>localhost:8090]
+    WORK[Docker code runner]
+  end
+
+  subgraph INFRA[Data & Infra]
+    DBJ[(MySQL<br/>ai_hiring_jobs)]
+    DBA[(MySQL<br/>ai_hiring_applications)]
+    DBQ[(MySQL<br/>ai_hiring_questions)]
+    KAFKA[(Kafka / Resume pipeline)]
+    AI[AI Service<br/>optional]
+  end
+
+  F --> GW
+  GW --> AUTH
+  GW --> JOB
+  GW --> APP
+  GW --> APT
+  GW --> DSA
+  GW --> EXEC
+  GW --> AI
+
+  APP --> JOB
+  APP --> APT
+  APP --> DSA
+  APP --> EXEC
+  APP --> KAFKA
+
+  AUTH --> DBA
+  JOB --> DBJ
+  APP --> DBA
+  APT --> DBQ
+  DSA --> DBQ
+  EXEC --> WORK
+  EXEC --> KAFKA
+  EXEC --> AI
+
+  classDef edge fill:#0f172a,color:#fff,stroke:#1e293b,stroke-width:2px;
+  classDef service fill:#eef2ff,stroke:#6366f1,color:#111827,stroke-width:1.5px;
+  classDef qa fill:#ecfeff,stroke:#06b6d4,color:#0f172a,stroke-width:1.5px;
+  classDef infra fill:#fff7ed,stroke:#f97316,color:#111827,stroke-width:1.5px;
+  classDef note fill:#f8fafc,stroke:#94a3b8,color:#334155,stroke-dasharray: 4 3;
+
+  class GW edge;
+  class AUTH,JOB,APP service;
+  class APT,DSA qa;
+  class EXEC,WORK infra;
+  class DBJ,DBA,DBQ,KAFKA,AI infra;
+  class CORS note;

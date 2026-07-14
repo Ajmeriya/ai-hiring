@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Briefcase, Calendar, ClipboardList, UploadCloud, CheckCircle2, Clock3 } from 'lucide-react'
 import { useJobs } from '../context/JobContext.jsx'
 import { useCandidateApplications } from '../context/CandidateApplicationContext.jsx'
+import { buildFallbackJobFromApplication } from '../utils/jobFallback.js'
 
 export default function CandidateJobDetail({ userProfile }) {
   const { jobId } = useParams()
@@ -15,8 +16,8 @@ export default function CandidateJobDetail({ userProfile }) {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const job = jobs.find((item) => String(item.id) === String(jobId))
   const application = getApplicationByJobId(jobId)
+  const job = jobs.find((item) => String(item.id) === String(jobId)) || buildFallbackJobFromApplication(application)
   const resumePending = Boolean(application && (!application.resumeStatus || application.resumeStatus === 'PENDING'))
   const resumeRejected = Boolean(application && (application.resumeStatus === 'REJECTED' || application.overallStatus === 'RESUME_REJECTED'))
 

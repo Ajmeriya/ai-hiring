@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1400" viewBox="0 0 2200 1400" role="img" aria-labelledby="title desc">
+  <title id="title">AI Hiring Platform Final Architecture</title>
+  <desc id="desc">Frontend connects to an API gateway that routes to auth, job, application, aptitude question, DSA question, execution, and optional AI services. Services persist to separate MySQL databases and execution uses a Docker code runner.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="gate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 34px/1.2 Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 16px/1.4 Arial, sans-serif; fill: #475569; }
+      .section { font: 700 18px/1.2 Arial, sans-serif; fill: #0f172a; letter-spacing: 0.5px; }
+      .label { font: 600 16px/1.4 Arial, sans-serif; fill: #0f172a; }
+      .small { font: 400 13px/1.4 Arial, sans-serif; fill: #334155; }
+      .box { rx: 18; ry: 18; stroke-width: 2; }
+      .service { fill: #eef2ff; stroke: #6366f1; }
+      .qa { fill: #ecfeff; stroke: #06b6d4; }
+      .infra { fill: #fff7ed; stroke: #f97316; }
+      .client { fill: #ffffff; stroke: #94a3b8; }
+      .gateway { fill: url(#gate); stroke: #0f172a; }
+      .note { fill: #f8fafc; stroke: #94a3b8; stroke-dasharray: 6 5; }
+      .lane { fill: rgba(255,255,255,0.5); stroke: #cbd5e1; stroke-width: 1.5; rx: 28; ry: 28; }
+      .arrow { stroke: #334155; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .arrow-soft { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="2200" height="1400" fill="url(#bg)"/>
+
+  <text x="80" y="82" class="title">AI Hiring Platform Final Architecture</text>
+  <text x="80" y="116" class="subtitle">Gateway-centered layout with separate services for auth, jobs, application orchestration, aptitude questions, DSA/SQL questions, and execution.</text>
+
+  <rect x="60" y="160" width="2080" height="1120" class="lane"/>
+
+  <text x="120" y="220" class="section">Clients</text>
+  <rect x="110" y="250" width="320" height="130" class="box client"/>
+  <text x="270" y="300" text-anchor="middle" class="label">Frontend</text>
+  <text x="270" y="326" text-anchor="middle" class="small">React / Vite</text>
+  <text x="270" y="348" text-anchor="middle" class="small">localhost:3000</text>
+
+  <rect x="110" y="420" width="150" height="70" class="box client"/>
+  <text x="185" y="452" text-anchor="middle" class="label">Recruiter</text>
+  <text x="185" y="474" text-anchor="middle" class="small">Browser</text>
+
+  <rect x="280" y="420" width="150" height="70" class="box client"/>
+  <text x="355" y="452" text-anchor="middle" class="label">Candidate</text>
+  <text x="355" y="474" text-anchor="middle" class="small">Browser</text>
+
+  <text x="570" y="220" class="section">Edge Layer</text>
+  <rect x="520" y="255" width="420" height="220" class="box gateway"/>
+  <text x="730" y="312" text-anchor="middle" class="label" fill="#ffffff">API Gateway</text>
+  <text x="730" y="340" text-anchor="middle" class="small" fill="#e2e8f0">Spring Cloud Gateway</text>
+  <text x="730" y="364" text-anchor="middle" class="small" fill="#e2e8f0">localhost:8080</text>
+  <rect x="560" y="388" width="340" height="58" class="box note"/>
+  <text x="730" y="424" text-anchor="middle" class="small">Single CORS boundary for browser requests</text>
+
+  <text x="1030" y="220" class="section">Core Spring Services</text>
+  <rect x="1020" y="255" width="300" height="110" class="box service"/>
+  <text x="1170" y="300" text-anchor="middle" class="label">Auth Service</text>
+  <text x="1170" y="324" text-anchor="middle" class="small">localhost:8083</text>
+
+  <rect x="1020" y="395" width="300" height="110" class="box service"/>
+  <text x="1170" y="440" text-anchor="middle" class="label">Job Service</text>
+  <text x="1170" y="464" text-anchor="middle" class="small">localhost:8081</text>
+
+  <rect x="1020" y="535" width="300" height="130" class="box service"/>
+  <text x="1170" y="584" text-anchor="middle" class="label">Application Service</text>
+  <text x="1170" y="608" text-anchor="middle" class="small">localhost:8082</text>
+  <text x="1170" y="630" text-anchor="middle" class="small">Orchestrates rounds and resume flow</text>
+
+  <text x="1410" y="220" class="section">Question Services</text>
+  <rect x="1420" y="255" width="300" height="120" class="box qa"/>
+  <text x="1570" y="304" text-anchor="middle" class="label">Aptitude Question Service</text>
+  <text x="1570" y="328" text-anchor="middle" class="small">FastAPI</text>
+  <text x="1570" y="350" text-anchor="middle" class="small">localhost:8086</text>
+
+  <rect x="1420" y="405" width="300" height="140" class="box qa"/>
+  <text x="1570" y="454" text-anchor="middle" class="label">DSA / SQL Question Service</text>
+  <text x="1570" y="478" text-anchor="middle" class="small">FastAPI</text>
+  <text x="1570" y="500" text-anchor="middle" class="small">localhost:8087</text>
+  <text x="1570" y="522" text-anchor="middle" class="small">Visible and hidden test cases</text>
+
+  <text x="1750" y="220" class="section">Execution</text>
+  <rect x="1770" y="255" width="300" height="120" class="box infra"/>
+  <text x="1920" y="304" text-anchor="middle" class="label">Execution Service</text>
+  <text x="1920" y="328" text-anchor="middle" class="small">FastAPI</text>
+  <text x="1920" y="350" text-anchor="middle" class="small">localhost:8090</text>
+
+  <rect x="1770" y="405" width="300" height="90" class="box infra"/>
+  <text x="1920" y="442" text-anchor="middle" class="label">Docker code runner</text>
+  <text x="1920" y="466" text-anchor="middle" class="small">isolated sandboxes</text>
+
+  <text x="1040" y="790" class="section">Data &amp; Infrastructure</text>
+  <rect x="110" y="860" width="330" height="110" class="box infra"/>
+  <text x="275" y="906" text-anchor="middle" class="label">MySQL</text>
+  <text x="275" y="930" text-anchor="middle" class="small">ai_hiring_jobs</text>
+
+  <rect x="480" y="860" width="330" height="110" class="box infra"/>
+  <text x="645" y="906" text-anchor="middle" class="label">MySQL</text>
+  <text x="645" y="930" text-anchor="middle" class="small">ai_hiring_applications</text>
+
+  <rect x="850" y="860" width="330" height="110" class="box infra"/>
+  <text x="1015" y="906" text-anchor="middle" class="label">MySQL</text>
+  <text x="1015" y="930" text-anchor="middle" class="small">ai_hiring_questions</text>
+
+  <rect x="1220" y="860" width="330" height="110" class="box infra"/>
+  <text x="1385" y="906" text-anchor="middle" class="label">Kafka</text>
+  <text x="1385" y="930" text-anchor="middle" class="small">resume-analysis pipeline</text>
+
+  <rect x="1590" y="860" width="330" height="110" class="box note"/>
+  <text x="1755" y="906" text-anchor="middle" class="label">AI Service</text>
+  <text x="1755" y="930" text-anchor="middle" class="small">optional helper service</text>
+
+  <rect x="1590" y="1010" width="330" height="110" class="box note"/>
+  <text x="1755" y="1056" text-anchor="middle" class="label">Monitoring</text>
+  <text x="1755" y="1080" text-anchor="middle" class="small">logs, metrics, traces</text>
+
+  <line x1="430" y1="315" x2="520" y2="315" class="arrow"/>
+  <line x1="430" y1="455" x2="520" y2="390" class="arrow-soft"/>
+  <line x1="410" y1="455" x2="520" y2="430" class="arrow-soft"/>
+
+  <line x1="940" y1="310" x2="1020" y2="310" class="arrow"/>
+  <line x1="940" y1="450" x2="1020" y2="450" class="arrow"/>
+  <line x1="940" y1="600" x2="1020" y2="600" class="arrow"/>
+
+  <line x1="1320" y1="310" x2="1420" y2="310" class="arrow"/>
+  <line x1="1320" y1="450" x2="1420" y2="450" class="arrow"/>
+  <line x1="1320" y1="600" x2="1420" y2="470" class="arrow-soft"/>
+
+  <line x1="1720" y1="315" x2="1770" y2="315" class="arrow"/>
+  <line x1="1720" y1="460" x2="1770" y2="460" class="arrow"/>
+
+  <line x1="1170" y1="665" x2="275" y2="860" class="arrow-soft"/>
+  <line x1="1170" y1="665" x2="645" y2="860" class="arrow-soft"/>
+  <line x1="1170" y1="665" x2="1015" y2="860" class="arrow-soft"/>
+  <line x1="1570" y1="535" x2="1385" y2="860" class="arrow-soft"/>
+  <line x1="1920" y1="375" x2="1755" y2="860" class="arrow-soft"/>
+
+  <line x1="1920" y1="375" x2="1920" y2="405" class="arrow-soft"/>
+
+  <text x="110" y="1235" class="subtitle">Traffic path: browser → gateway → service. The gateway owns browser CORS; backend services stay CORS-free.</text>
+</svg>

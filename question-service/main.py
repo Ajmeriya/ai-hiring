@@ -5,7 +5,6 @@ import logging
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from api.routes import router
@@ -28,14 +27,6 @@ app = FastAPI(
     description="Standalone aptitude question service with Gemini/LangChain generation and MySQL persistence.",
     version=config.SERVICE_VERSION,
     lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8083", "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 app.include_router(router, tags=["aptitude-questions"])

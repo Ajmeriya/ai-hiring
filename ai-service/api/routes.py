@@ -1,7 +1,6 @@
 """FastAPI routes for resume evaluation"""
 
 import logging
-import io
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -12,6 +11,7 @@ from processing.extractor import extract_all_information
 from embeddings.embedding_model import EmbeddingModel
 from scoring.scorer import ResumeScorer
 from gemini.gemini_client import GeminiClient
+from splitters.text_splitter import ResumeSplitter
 
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
@@ -20,6 +20,8 @@ router = APIRouter()
 embedding_model = EmbeddingModel("all-MiniLM-L6-v2")
 scorer = ResumeScorer(embedding_model)
 gemini_client = GeminiClient()
+# LangChain text splitter — chunks long resumes before embedding
+resume_splitter = ResumeSplitter(chunk_size=500, chunk_overlap=50)
 
 
 class EvaluationRequest(BaseModel):
@@ -107,7 +109,25 @@ async def evaluate_resume(
         # Clean texts
         resume_cleaned = TextCleaner.clean_text(resume_text)
         job_cleaned = TextCleaner.clean_text(job_description)
-        
+
+        # --- LangChain text splitting -----------------------------------
+        # Split long resumes into overlapping chunks and take the most
+        # relevant portion for semantic embedding. Short resumes are
+        # returned as-is (single chunk). This improves semantic accuracy
+        # for multi-page CVs without changing the scoring formula.
+        resume_for_embedding = resume_splitter.split_and_join_best(
+            resume_cleaned, max_chars=2000
+        ) or resume_cleaned
+        job_for_embedding = resume_splitter.split_and_join_best(
+            job_cleaned, max_chars=2000
+        ) or job_cleaned
+        logger.info(
+            "Text splitting: resume %d→%d chars, job %d→%d chars",
+            len(resume_cleaned), len(resume_for_embedding),
+            len(job_cleaned), len(job_for_embedding),
+        )
+        # ----------------------------------------------------------------
+
         # Extract information
         logger.info("Extracting information from resume")
         resume_info = extract_all_information(resume_text)
@@ -115,7 +135,7 @@ async def evaluate_resume(
         candidate_years = resume_info['years_of_experience']
         projects = resume_info['projects']
         certifications = resume_info['certifications']
-        
+
         # Parse required skills
         job_skills = [s.strip() for s in required_skills.split(',') if s.strip()]
         if not job_skills:
@@ -123,12 +143,12 @@ async def evaluate_resume(
             job_sections = TextCleaner.extract_sections(job_cleaned)
             job_skills_text = job_sections.get('skills', '')
             job_skills = job_skills_text.split() if job_skills_text else []
-        
-        # Calculate base score
+
+        # Calculate base score (uses LangChain-split text for semantic scoring)
         logger.info("Calculating base score")
         base_score = scorer.calculate_base_score(
-            resume_cleaned,
-            job_cleaned,
+            resume_for_embedding,
+            job_for_embedding,
             resume_skills,
             job_skills,
             candidate_years,
@@ -171,8 +191,8 @@ async def evaluate_resume(
         # Calculate final score
         final_score = scorer.calculate_final_score(base_score, gemini_score, use_gemini)
         
-        # Get score breakdown
-        semantic_score = scorer.calculate_semantic_score(resume_cleaned, job_cleaned)
+        # Get score breakdown (use the same split text for consistency)
+        semantic_score = scorer.calculate_semantic_score(resume_for_embedding, job_for_embedding)
         skill_score = scorer.calculate_skill_score(resume_skills, job_skills)
         experience_score = scorer.calculate_experience_score(candidate_years, required_years)
         

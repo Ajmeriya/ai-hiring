@@ -43,7 +43,9 @@ public class ApplicationService {
         application.setJobId(request.jobId());
         application.setCandidateId(request.candidateId());
         application.setCandidateEmail(request.candidateEmail());
-        application.setResumePath(request.resumePath());
+        if (request.resumePath() != null && !request.resumePath().isBlank()) {
+            application.setResumePath(request.resumePath());
+        }
         application.setOverallStatus(Application.ApplicationStatus.APPLIED);
         application.setCurrentRound(Application.Round.RESUME);
         application.setResumeStatus(Application.ResumeStatus.PENDING);
@@ -233,7 +235,7 @@ public class ApplicationService {
         }
     }
 
-    // ===== 5. Start Assessment Round (fetch questions from AI Service) =====
+    // ===== 5. Start Aptitude Round (fetch questions from question-service) =====
     public ApplicationRoundResponse startAptitudeRound(Long applicationId) {
         Optional<Application> optional = applicationRepository.findById(applicationId);
         if (optional.isEmpty()) {
@@ -248,16 +250,36 @@ public class ApplicationService {
 
         // Fetch job details for aptitude config
         JobDetailsResponse jobDetails = microserviceClient.getJobDetails(application.getJobId());
-        if (jobDetails == null || !jobDetails.jobRounds().aptitudeEnabled()) {
+        if (jobDetails != null && !jobDetails.jobRounds().aptitudeEnabled()) {
             logger.warn("Aptitude round not available for job: {}", application.getJobId());
             return null;
+        }
+
+        if (jobDetails == null) {
+            logger.warn("Job details unavailable for applicationId={}, jobId={}; using fallback aptitude config", applicationId, application.getJobId());
+            jobDetails = buildFallbackJobDetails(application.getJobId());
         }
 
         // Fetch questions from dedicated question-service
         var config = jobDetails.aptitudeConfig();
         if (config == null) {
-            logger.warn("Aptitude start failed: aptitudeConfig missing for jobId={}", application.getJobId());
-            return null;
+            logger.warn("Aptitude start failed: aptitudeConfig missing for jobId={}; using fallback aptitude config", application.getJobId());
+            config = new JobDetailsResponse.AptitudeConfigResponse(5, "Aptitude", "mcq", 20);
+            jobDetails = new JobDetailsResponse(
+                    jobDetails.id(),
+                    jobDetails.title(),
+                    jobDetails.company(),
+                    jobDetails.department(),
+                    jobDetails.salary(),
+                    jobDetails.description(),
+                    jobDetails.requiredExperienceYears(),
+                    jobDetails.status(),
+                    jobDetails.skills(),
+                    jobDetails.jobRounds(),
+                    config,
+                    jobDetails.technicalConfig(),
+                    jobDetails.interviewConfig()
+            );
         }
         AptitudeQuestionRequest questionRequest = new AptitudeQuestionRequest(
                 application.getId(),
@@ -297,6 +319,24 @@ public class ApplicationService {
         return new ApplicationRoundResponse(applicationId, "APTITUDE", Application.RoundStatus.IN_PROGRESS.toString(), questionBatch.questions());
     }
 
+    private JobDetailsResponse buildFallbackJobDetails(Long jobId) {
+        return new JobDetailsResponse(
+                jobId,
+                "Job " + jobId,
+                "AI Hiring Platform",
+                "Candidate Portal",
+                "",
+                "",
+                null,
+                "active",
+                List.of(),
+                new JobDetailsResponse.JobRoundsResponse(true, false, false),
+                new JobDetailsResponse.AptitudeConfigResponse(5, "Aptitude", "mcq", 20),
+                null,
+                null
+        );
+    }
+
     public ApplicationRoundResponse startTechnicalRound(Long applicationId) {
         Optional<Application> optional = applicationRepository.findById(applicationId);
         if (optional.isEmpty()) {
@@ -314,10 +354,23 @@ public class ApplicationService {
 
         // Fetch questions from AI Service
         var config = jobDetails.technicalConfig();
-        var questions = microserviceClient.getTechnicalQuestions(
-                config.dsaQuestions(), config.dsaTopics(),
-                config.sqlQuestions(), config.sqlTopics()
+        CodingQuestionAssignResponse questionBatch = microserviceClient.getCodingQuestions(
+                new CodingQuestionAssignRequest(
+                        application.getId(),
+                        application.getJobId(),
+                        config == null ? 0 : config.dsaQuestions(),
+                        parseTopics(config == null ? null : config.dsaTopics()),
+                        config == null ? "medium" : config.dsaDifficulty(),
+                        config == null ? 0 : config.sqlQuestions(),
+                        parseTopics(config == null ? null : config.sqlTopics()),
+                        config == null ? "medium" : config.sqlDifficulty()
+                )
         );
+
+        if (questionBatch == null || questionBatch.questions() == null || questionBatch.questions().isEmpty()) {
+            logger.error("Failed to load coding questions for applicationId={} jobId={}", applicationId, application.getJobId());
+            return null;
+        }
 
         // Update application status
         application.setTechnicalStatus(Application.RoundStatus.IN_PROGRESS);
@@ -325,7 +378,77 @@ public class ApplicationService {
         applicationRepository.save(application);
 
         logger.info("Technical round started for application: ID={}", applicationId);
-        return new ApplicationRoundResponse(applicationId, "TECHNICAL", Application.RoundStatus.IN_PROGRESS.toString(), questions);
+        return new ApplicationRoundResponse(applicationId, "TECHNICAL", Application.RoundStatus.IN_PROGRESS.toString(), questionBatch.questions());
+    }
+
+    public CodeExecutionResponse runTechnicalQuestion(Long applicationId, TechnicalRunRequest request) {
+        Optional<Application> optional = applicationRepository.findById(applicationId);
+        if (optional.isEmpty()) {
+            return null;
+        }
+
+        List<CodingQuestionTestCase> visibleTestCases = microserviceClient.getQuestionTestCases(request.questionId(), false);
+        if (visibleTestCases.isEmpty()) {
+            logger.warn("No visible test cases found for questionId={}", request.questionId());
+        }
+
+        CodeExecutionRequest executionRequest = new CodeExecutionRequest(
+                request.language(),
+                request.code(),
+                visibleTestCases.stream()
+                        .map(testCase -> new CodeExecutionTestCase(testCase.inputData(), testCase.expectedOutput(), testCase.hidden()))
+                        .toList(),
+                2
+        );
+
+        return microserviceClient.runCode(executionRequest);
+    }
+
+    public CodeExecutionResponse submitTechnicalRound(Long applicationId, TechnicalSubmissionRequest request) {
+        Optional<Application> optional = applicationRepository.findById(applicationId);
+        if (optional.isEmpty()) {
+            return null;
+        }
+
+        int totalPassed = 0;
+        int totalTests = 0;
+        java.util.ArrayList<CodeExecutionTestResult> allResults = new java.util.ArrayList<>();
+
+        for (TechnicalSubmissionRequest.QuestionSubmission submission : request.questions()) {
+            List<CodingQuestionTestCase> allTestCases = microserviceClient.getQuestionTestCases(submission.questionId(), true);
+            CodeExecutionRequest executionRequest = new CodeExecutionRequest(
+                    submission.language() != null ? submission.language() : request.language(),
+                    submission.code(),
+                    allTestCases.stream()
+                            .map(testCase -> new CodeExecutionTestCase(testCase.inputData(), testCase.expectedOutput(), testCase.hidden()))
+                            .toList(),
+                    2
+            );
+
+            CodeExecutionResponse executionResponse = microserviceClient.submitCode(executionRequest);
+            if (executionResponse == null) {
+                continue;
+            }
+            totalPassed += executionResponse.passed() == null ? 0 : executionResponse.passed();
+            totalTests += executionResponse.total() == null ? 0 : executionResponse.total();
+            if (executionResponse.results() != null) {
+                allResults.addAll(executionResponse.results());
+            }
+        }
+
+        float score = totalTests > 0 ? Math.round((totalPassed * 100.0f / totalTests) * 10f) / 10f : 0.0f;
+        CodeExecutionResponse summary = new CodeExecutionResponse(
+                totalPassed,
+                totalTests,
+                totalPassed == totalTests && totalTests > 0 ? "Accepted" : "Wrong Answer",
+                null,
+                null,
+                0,
+                allResults
+        );
+
+        submitRoundScore(applicationId, "TECHNICAL", score);
+        return summary;
     }
 
     public ApplicationRoundResponse startInterviewRound(Long applicationId) {
@@ -369,8 +492,17 @@ public class ApplicationService {
         switch (round.toUpperCase()) {
             case "APTITUDE":
                 application.setAptitudeScore(score);
-                application.setAptitudeStatus(score >= 40 ? Application.RoundStatus.PASSED : Application.RoundStatus.FAILED);
-                moveToNextAssessmentRound(application, Application.Round.APTITUDE);
+                // New rule: aptitude requires 65% to pass
+                if (score != null && score >= 65.0f) {
+                    application.setAptitudeStatus(Application.RoundStatus.PASSED);
+                    // proceed to next round only on pass
+                    moveToNextAssessmentRound(application, Application.Round.APTITUDE);
+                } else {
+                    application.setAptitudeStatus(Application.RoundStatus.FAILED);
+                    // mark overall as rejected / aptitude failed and complete the application
+                    application.setOverallStatus(Application.ApplicationStatus.REJECTED);
+                    application.setCurrentRound(Application.Round.COMPLETED);
+                }
                 break;
             case "TECHNICAL":
                 application.setTechnicalScore(score);

@@ -1,5 +1,5 @@
 server:
-  port: 8083
+  port: 8082
 
 spring:
   application:
@@ -40,6 +40,6 @@ application:
 
 # Microservice URLs
 microservices:
-  job-service: http://localhost:8082
+  job-service: http://localhost:8081
   resume-checker: http://localhost:8084
   ai-service: http://localhost:8085

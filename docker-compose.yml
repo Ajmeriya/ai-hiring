@@ -1,0 +1,141 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ai-hiring-mysql
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Harsh@101845}
+      MYSQL_DATABASE: ai_hiring_auth
+    ports:
+      - "${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  auth-service:
+    build:
+      context: ./auth-service
+    container_name: ai-hiring-auth-service
+    env_file:
+      - ./auth-service/.env
+    ports:
+      - "8083:8083"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  job-service:
+    build:
+      context: ./job-service
+    container_name: ai-hiring-job-service
+    env_file:
+      - ./job-service/.env
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  application-service:
+    build:
+      context: ./application-service
+    container_name: ai-hiring-application-service
+    env_file:
+      - ./application-service/.env
+    ports:
+      - "8082:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  gateway-service:
+    build:
+      context: ./gateway-service
+    container_name: ai-hiring-gateway-service
+    env_file:
+      - ./gateway-service/.env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth-service
+      - job-service
+      - application-service
+      - ai-service
+      - question-service
+      - dsaquestionservice
+      - execution-service
+      - anti-cheat-service
+
+  ai-service:
+    build:
+      context: ./ai-service
+    container_name: ai-hiring-ai-service
+    env_file:
+      - ./ai-service/.env
+    ports:
+      - "8085:8085"
+
+  question-service:
+    build:
+      context: ./question-service
+    container_name: ai-hiring-question-service
+    env_file:
+      - ./question-service/.env
+    ports:
+      - "8086:8086"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  dsaquestionservice:
+    build:
+      context: ./dsaquestionservice
+    container_name: ai-hiring-dsaquestionservice
+    env_file:
+      - ./dsaquestionservice/.env
+    ports:
+      - "8087:8087"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  execution-service:
+    build:
+      context: ./execution-service
+    container_name: ai-hiring-execution-service
+    env_file:
+      - ./execution-service/.env
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  anti-cheat-service:
+    build:
+      context: ./anti-cheat-service
+    container_name: ai-hiring-anti-cheat-service
+    env_file:
+      - ./anti-cheat-service/.env
+    ports:
+      - "8088:8088"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ai-hiring-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway-service
+
+volumes:
+  mysql-data:

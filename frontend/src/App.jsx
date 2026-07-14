@@ -17,6 +17,7 @@ import CandidateJobDetail from './pages/CandidateJobDetail.jsx'
 import CandidateApplications from './pages/CandidateApplications.jsx'
 import CandidateApplicationFlow from './pages/CandidateApplicationFlow.jsx'
 import CandidateAptitude from './pages/CandidateAptitude.jsx'
+import CandidateTechnicalRound from './pages/CandidateTechnicalRound.jsx'
 import { logout } from './api/authApi.js'
 
 const AUTH_STORAGE_KEY = 'ai-hiring-platform-authenticated'
@@ -122,7 +123,7 @@ function App() {
 
   return (
     <JobProvider>
-      <CandidateApplicationProvider>
+      <CandidateApplicationProvider currentUserProfile={userProfile} isAuthenticated={isAuthenticated}>
         <Router>
           <Routes>
             <Route
@@ -155,6 +156,7 @@ function App() {
                   <Route path="/candidate/applications" element={<CandidateApplications />} />
                   <Route path="/candidate/applications/:jobId" element={<CandidateApplicationFlow />} />
                   <Route path="/candidate/aptitude/:applicationId" element={<CandidateAptitude />} />
+                  <Route path="/candidate/technical/:jobId" element={<CandidateTechnicalRound />} />
                   <Route path="/candidate/assessment" element={<CandidateApplications />} />
                   <Route path="/candidate" element={<Navigate to="/candidate/dashboard" replace />} />
                   <Route path="*" element={<Navigate to="/candidate/dashboard" replace />} />

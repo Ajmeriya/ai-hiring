@@ -1,0 +1,67 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: gateway-service
+
+  cloud:
+    gateway:
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins:
+              - http://localhost:3000    # Frontend in Docker
+              - http://localhost:5173    # React Vite
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - "*"
+            allowCredentials: true
+
+      routes:
+        - id: auth-service
+          uri: ${AUTH_SERVICE_URL:http://auth-service:8083}
+          predicates:
+            - Path=/api/auth/**
+
+        - id: job-service
+          uri: ${JOB_SERVICE_URL:http://job-service:8081}
+          predicates:
+            - Path=/api/jobs/**
+
+        - id: application-service
+          uri: ${APPLICATION_SERVICE_URL:http://application-service:8082}
+          predicates:
+            - Path=/api/applications/**
+
+        - id: question-service
+          uri: ${DSA_QUESTION_SERVICE_URL:http://question-service:8087}
+          predicates:
+            - Path=/api/dsa/**
+
+        - id: execution-service
+          uri: ${EXECUTION_SERVICE_URL:http://execution-service:8090}
+          predicates:
+            - Path=/api/execute/**
+
+        - id: anti-cheat-service
+          uri: ${ANTI_CHEAT_SERVICE_URL:http://anti-cheat-service:8088}
+          predicates:
+            - Path=/api/proctoring/**
+
+        - id: ai-service
+          uri: ${AI_SERVICE_URL:http://ai-service:8085}
+          predicates:
+            - Path=/api/ai/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

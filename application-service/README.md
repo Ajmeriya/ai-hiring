@@ -8,7 +8,7 @@ Spring Boot microservice that orchestrates the candidate application lifecycle a
 - Tracks resume review, aptitude, technical, and interview round states.
 - Calls `job-service` for job details and assessment configuration.
 - Calls `question-service` for aptitude questions.
-- Calls `ai-service` for resume analysis and other AI scoring.
+- Calls `ai-service` for resume analysis and scoring only.
 
 ## Current flow
 
@@ -80,7 +80,7 @@ mvn spring-boot:run
 
 ## Ports
 
-- Application service: `8083`
+- Application service: `8082`
 - Job service: `8082`
 - Question service: `8086`
 - AI service: `8085`

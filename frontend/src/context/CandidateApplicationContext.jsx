@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { authenticatedFetch } from '../api/authApi.js'
+import { APPLICATION_SERVICE_URL } from '../config/serviceUrls.js'
 
 const APPLICATIONS_STORAGE_KEY = 'ai-hiring-platform-candidate-applications'
-const APPLICATION_SERVICE_URL = 'http://localhost:8083'
 
 const CandidateApplicationContext = createContext(null)
 
@@ -38,16 +38,7 @@ export const getNextRound = (job, completedStages = []) => {
 }
 
 function getInitialApplications() {
-  if (typeof window === 'undefined') {
-    return []
-  }
-
-  try {
-    const storedApplications = window.localStorage.getItem(APPLICATIONS_STORAGE_KEY)
-    return storedApplications ? JSON.parse(storedApplications) : []
-  } catch {
-    return []
-  }
+  return []
 }
 
 function normalizeApplication(application) {
@@ -68,6 +59,7 @@ function normalizeApplication(application) {
     }
   }
 
+  const aptitudeFailed = application.aptitudeStatus === 'FAILED' || application.overallStatus === 'REJECTED'
   let currentStage = application.currentStage || ROUND_STAGE_MAP[application.currentRound] || null
   const resumePending = !application.resumeStatus || application.resumeStatus === 'PENDING'
 
@@ -77,9 +69,14 @@ function normalizeApplication(application) {
     currentStage = 'resume'
   }
 
+  if (aptitudeFailed) {
+    currentStage = null
+  }
+
   return {
     id: application.id,
     jobId: application.jobId,
+    candidateId: application.candidateId ?? application.candidateID ?? application.candidate?.id ?? null,
     jobTitle: application.jobTitle,
     department: application.department,
     company: application.company || 'AI Hiring Platform',
@@ -89,7 +86,7 @@ function normalizeApplication(application) {
     resumeSummary: application.resumeSummary,
     progress,
     currentStage,
-    status: application.status || 'in-progress',
+    status: aptitudeFailed ? 'failed' : (application.status || 'in-progress'),
     appliedAt: application.appliedAt,
     updatedAt: application.updatedAt || application.appliedAt,
     roundScores: application.roundScores || {},
@@ -104,23 +101,20 @@ function normalizeApplication(application) {
   }
 }
 
-export function CandidateApplicationProvider({ children }) {
+export function CandidateApplicationProvider({ children, currentUserProfile, isAuthenticated }) {
   const [applications, setApplications] = useState(getInitialApplications)
+  const candidateIdentity = currentUserProfile?.email || currentUserProfile?.id || null
 
-  // Fetch applications from backend on mount
+  // Fetch applications from backend whenever the signed-in candidate changes.
   useEffect(() => {
     let mounted = true
+    setApplications([])
 
     async function loadApplications() {
       try {
-        // Get candidateId from user profile
-        const userProfileStr = localStorage.getItem('ai-hiring-platform-user-profile')
-        const userProfile = userProfileStr ? JSON.parse(userProfileStr) : null
-        const candidateId = userProfile?.email || userProfile?.id
+        if (!isAuthenticated || !candidateIdentity) return
 
-        if (!candidateId) return
-
-        const res = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/api/applications/candidate/${encodeURIComponent(candidateId)}`)
+        const res = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/candidate/${encodeURIComponent(candidateIdentity)}`)
         if (!res.ok) return
 
         const data = await res.json()
@@ -135,15 +129,7 @@ export function CandidateApplicationProvider({ children }) {
 
     loadApplications()
     return () => { mounted = false }
-  }, [])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(APPLICATIONS_STORAGE_KEY, JSON.stringify(applications))
-    } catch {
-      // Ignore persistence errors so the app stays usable in the browser.
-    }
-  }, [applications])
+  }, [candidateIdentity, isAuthenticated])
 
   const getApplicationByJobId = (jobId) => {
     return applications.find((application) => String(application.jobId) === String(jobId)) || null
@@ -160,14 +146,14 @@ export function CandidateApplicationProvider({ children }) {
       }
 
       // Call backend API to create application
-      const createAppRes = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/api/applications`, {
+      const createAppRes = await authenticatedFetch(APPLICATION_SERVICE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           jobId: job.id,
           candidateId: candidateProfile?.id || candidateProfile?.email,
           candidateEmail: candidateProfile?.email || '',
-          resumePath: resumeData.fileName || 'resume.pdf'
+          resumePath: ''
         })
       })
 
@@ -181,7 +167,7 @@ export function CandidateApplicationProvider({ children }) {
       const backendApp = await createAppRes.json()
 
       const evaluationResponse = await authenticatedFetch(
-        `${APPLICATION_SERVICE_URL}/api/applications/${backendApp.id}/evaluate-resume-ai`,
+        `${APPLICATION_SERVICE_URL}/${backendApp.id}/evaluate-resume-ai`,
         {
           method: 'POST',
           body: (() => {
@@ -263,7 +249,7 @@ export function CandidateApplicationProvider({ children }) {
       const candidateId = candidateProfile?.email || candidateProfile?.id
       if (!candidateId) return
 
-      const res = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/api/applications/candidate/${encodeURIComponent(candidateId)}`)
+      const res = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/candidate/${encodeURIComponent(candidateId)}`)
       if (!res.ok) return
       const data = await res.json()
       const normalized = data.map(app => normalizeApplication(app))
@@ -293,7 +279,7 @@ export function CandidateApplicationProvider({ children }) {
 
       // Call backend API to submit score
       const submitRes = await authenticatedFetch(
-        `${APPLICATION_SERVICE_URL}/api/applications/${application.id}/round/${round}/submit-score`,
+        `${APPLICATION_SERVICE_URL}/${application.id}/round/${round}/submit-score`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -18,8 +18,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 @Service
-public class JwtService {
-
+public class JwtService 
+{
     @Value("${application.security.jwt.secret-key}")
     private String secretKey;
 

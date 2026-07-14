@@ -10,6 +10,7 @@ public record JobDetailsResponse(
         String department,
         String salary,
         String description,
+        Integer requiredExperienceYears,
         String status,
         List<String> skills,
         JobRoundsResponse jobRounds,
@@ -34,8 +35,10 @@ public record JobDetailsResponse(
     public record TechnicalConfigResponse(
             Integer dsaQuestions,
             String dsaTopics,
+            String dsaDifficulty,
             Integer sqlQuestions,
             String sqlTopics,
+            String sqlDifficulty,
             Integer time
     ) {}
 

@@ -1,20 +1,4 @@
-SET FOREIGN_KEY_CHECKS = 0;
-
-DROP TABLE IF EXISTS interview_configs;
-DROP TABLE IF EXISTS technical_configs;
-DROP TABLE IF EXISTS aptitude_configs;
-DROP TABLE IF EXISTS job_rounds;
-DROP TABLE IF EXISTS job_skills;
-DROP TABLE IF EXISTS jobs;
-
-DROP TABLE IF EXISTS round_topics;
-DROP TABLE IF EXISTS assessment_rounds;
-DROP TABLE IF EXISTS assessment_plans;
-DROP TABLE IF EXISTS job_postings;
-
-SET FOREIGN_KEY_CHECKS = 1;
-
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
     id BIGINT NOT NULL AUTO_INCREMENT,
     title VARCHAR(255) NOT NULL,
     company VARCHAR(255),
@@ -26,7 +10,7 @@ CREATE TABLE jobs (
     PRIMARY KEY (id)
 ) ENGINE=InnoDB;
 
-CREATE TABLE job_skills (
+CREATE TABLE IF NOT EXISTS job_skills (
     id BIGINT NOT NULL AUTO_INCREMENT,
     job_id BIGINT NOT NULL,
     skill VARCHAR(150) NOT NULL,
@@ -34,7 +18,7 @@ CREATE TABLE job_skills (
     CONSTRAINT fk_job_skills_job FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE job_rounds (
+CREATE TABLE IF NOT EXISTS job_rounds (
     id BIGINT NOT NULL AUTO_INCREMENT,
     job_id BIGINT NOT NULL,
     aptitude_enabled BIT NOT NULL,
@@ -45,7 +29,7 @@ CREATE TABLE job_rounds (
     CONSTRAINT fk_job_rounds_job FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE aptitude_configs (
+CREATE TABLE IF NOT EXISTS aptitude_configs (
     id BIGINT NOT NULL AUTO_INCREMENT,
     job_id BIGINT NOT NULL,
     num_questions INT NULL,
@@ -57,7 +41,7 @@ CREATE TABLE aptitude_configs (
     CONSTRAINT fk_aptitude_configs_job FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE technical_configs (
+CREATE TABLE IF NOT EXISTS technical_configs (
     id BIGINT NOT NULL AUTO_INCREMENT,
     job_id BIGINT NOT NULL,
     dsa_questions INT NULL,
@@ -72,7 +56,7 @@ CREATE TABLE technical_configs (
     CONSTRAINT fk_technical_configs_job FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE interview_configs (
+CREATE TABLE IF NOT EXISTS interview_configs (
     id BIGINT NOT NULL AUTO_INCREMENT,
     job_id BIGINT NOT NULL,
     duration INT NULL,

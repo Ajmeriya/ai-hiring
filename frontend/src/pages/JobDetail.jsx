@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Circle, Clock3 } from 'lucide-react'
 import CandidateRow from '../components/CandidateRow.jsx'
 import { useJobs } from '../context/JobContext.jsx'
 import { authenticatedFetch } from '../api/authApi.js'
+import { JOB_SERVICE_URL, APPLICATION_SERVICE_URL } from '../config/serviceUrls.js'
 
 export default function JobDetail() {
   const { jobId } = useParams()
@@ -68,7 +69,7 @@ export default function JobDetail() {
         }
       }
 
-      const res = await authenticatedFetch(`http://localhost:8082/api/jobs/${job.id}`, {
+      const res = await authenticatedFetch(`${JOB_SERVICE_URL}/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -103,7 +104,7 @@ export default function JobDetail() {
         }
       }
 
-      const res = await authenticatedFetch(`http://localhost:8082/api/jobs/${job.id}`, {
+      const res = await authenticatedFetch(`${JOB_SERVICE_URL}/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -135,7 +136,7 @@ export default function JobDetail() {
         }
       }
 
-      const res = await authenticatedFetch(`http://localhost:8082/api/jobs/${job.id}`, {
+      const res = await authenticatedFetch(`${JOB_SERVICE_URL}/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -171,7 +172,7 @@ export default function JobDetail() {
     if (( !localJob || lacksDetails(localJob) ) && !remoteJob) {
       ;(async () => {
         try {
-          const res = await authenticatedFetch(`http://localhost:8082/api/jobs/${jobId}`)
+          const res = await authenticatedFetch(`${JOB_SERVICE_URL}/${jobId}`)
           if (!res.ok) return
           const data = await res.json()
           if (!mounted) return
@@ -221,7 +222,7 @@ export default function JobDetail() {
 
     const loadApplications = async () => {
       try {
-        const res = await authenticatedFetch(`http://localhost:8083/api/applications/job/${jobId}`)
+        const res = await authenticatedFetch(`${APPLICATION_SERVICE_URL}/job/${jobId}`)
         if (!res.ok) return
         const data = await res.json()
         if (!mounted) return
@@ -303,7 +304,7 @@ export default function JobDetail() {
                   if (remoteJob) setRemoteJob({ ...remoteJob, status: newStatus })
                   // persist to backend
                   try {
-                    const res = await authenticatedFetch(`http://localhost:8082/api/jobs/${job.id}`, {
+                    const res = await authenticatedFetch(`${JOB_SERVICE_URL}/${job.id}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ status: newStatus })

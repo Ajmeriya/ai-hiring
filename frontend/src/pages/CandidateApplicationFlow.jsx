@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Camera, CheckCircle2, Clock3, PlayCircle, ShieldCheck, Brain, Code2, MessageSquare, UploadCloud, RefreshCw } from 'lucide-react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, CheckCircle2, Clock3, PlayCircle, ShieldCheck, Brain, Code2, MessageSquare, UploadCloud, RefreshCw } from 'lucide-react'
 import { useJobs } from '../context/JobContext.jsx'
 import { getNextRound, getRoundSequence, useCandidateApplications } from '../context/CandidateApplicationContext.jsx'
 import { authenticatedFetch } from '../api/authApi.js'
+import { QUESTION_SERVICE_URL, EXECUTION_SERVICE_URL } from '../config/serviceUrls.js'
+import { buildFallbackJobFromApplication } from '../utils/jobFallback.js'
 
 const stageMeta = {
   resume: { label: 'Resume Screening', icon: ShieldCheck, color: 'text-teal-600' },
@@ -29,6 +31,78 @@ const interviewQuestions = [
   'How do you handle conflict in a team?',
   'Why do you want this role?'
 ]
+
+function getStarterCode(question, language) {
+  const normalizedLanguage = (language || '').toLowerCase()
+  if (normalizedLanguage === 'java') {
+    return question.starterCodeJava || 'public class Main {\n    public static void main(String[] args) throws Exception {\n\n    }\n}'
+  }
+  if (normalizedLanguage === 'cpp') {
+    return question.starterCodeCpp || '#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n\n    return 0;\n}\n'
+  }
+  if (normalizedLanguage === 'sql') {
+    return question.starterCodeSql || '-- Write your SQL query here\n'
+  }
+  return question.starterCodePython || 'import sys\n\n\ndef main():\n    pass\n\n\nif __name__ == "__main__":\n    main()\n'
+}
+
+function getDefaultLanguage(question) {
+  if ((question.topic || '').toLowerCase() === 'sql') {
+    return 'sql'
+  }
+  return 'python'
+}
+
+function normalizeRoundResults(response) {
+  return {
+    passed: response?.passed ?? 0,
+    total: response?.total ?? 0,
+    verdict: response?.verdict || 'Unknown',
+    stdout: response?.stdout || '',
+    stderr: response?.stderr || '',
+    executionTimeMs: response?.executionTimeMs ?? 0,
+    results: Array.isArray(response?.results) ? response.results : []
+  }
+}
+
+function didPassHiddenTests(response) {
+  const results = Array.isArray(response?.results) ? response.results : []
+  const hiddenResults = results.filter((result) => result.hidden)
+  if (hiddenResults.length === 0) {
+    return response?.verdict === 'Accepted'
+  }
+
+  return hiddenResults.every((result) => result.passed)
+}
+
+function buildTechnicalAssignRequest(applicationId, job) {
+  const technicalConfig = job?.hiringPlan?.technicalConfig || {}
+
+  return {
+    applicationId,
+    jobId: job?.id,
+    dsaCount: technicalConfig.dsaQuestions || 0,
+    dsaTopics: technicalConfig.dsaTopics ? technicalConfig.dsaTopics.split(',').map((item) => item.trim()).filter(Boolean) : [],
+    dsaDifficulty: technicalConfig.dsaDifficulty || 'medium',
+    sqlCount: technicalConfig.sqlQuestions || 0,
+    sqlTopics: technicalConfig.sqlTopics ? technicalConfig.sqlTopics.split(',').map((item) => item.trim()).filter(Boolean) : [],
+    sqlDifficulty: technicalConfig.sqlDifficulty || 'medium'
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 function useCameraStream(enabled) {
   const videoRef = useRef(null)
@@ -63,164 +137,170 @@ function useCameraStream(enabled) {
 
 export default function CandidateApplicationFlow() {
   const { jobId } = useParams()
+  const location = useLocation()
   const navigate = useNavigate()
   const { jobs } = useJobs()
   const { getApplicationByJobId, completeRound, getNextRound } = useCandidateApplications()
 
   const [answers, setAnswers] = useState({})
   const [sqlAnswer, setSqlAnswer] = useState('')
-  const [dsaAnswer, setDsaAnswer] = useState('')
   const [interviewAnswer, setInterviewAnswer] = useState('')
   const [aptStarted, setAptStarted] = useState(false)
   const [aptRemainingSeconds, setAptRemainingSeconds] = useState(0)
-  const [codeAnswers, setCodeAnswers] = useState([])
-  const [codeOutputs, setCodeOutputs] = useState([])
-  const [cameraEnabled, setCameraEnabled] = useState(false)
+  const [technicalRoundStarted, setTechnicalRoundStarted] = useState(false)
+  const [technicalQuestions, setTechnicalQuestions] = useState([])
+  const [technicalLoading, setTechnicalLoading] = useState(false)
+  const [technicalError, setTechnicalError] = useState('')
+  const [currentTechnicalIndex, setCurrentTechnicalIndex] = useState(0)
+  const [codeByQuestionId, setCodeByQuestionId] = useState({})
+  const [languageByQuestionId, setLanguageByQuestionId] = useState({})
+  const [runResultByQuestionId, setRunResultByQuestionId] = useState({})
+  const [successfulSubmissionByQuestionId, setSuccessfulSubmissionByQuestionId] = useState({})
+  const [runningQuestionId, setRunningQuestionId] = useState(null)
+  const [submittingQuestionId, setSubmittingQuestionId] = useState(null)
+  const [submittingTechnical, setSubmittingTechnical] = useState(false)
   const [showUpdateResumeModal, setShowUpdateResumeModal] = useState(false)
   const [updateResumeFile, setUpdateResumeFile] = useState(null)
   const [updatingResume, setUpdatingResume] = useState(false)
   const [updateError, setUpdateError] = useState('')
 
-  const job = jobs.find((item) => String(item.id) === String(jobId))
   const application = getApplicationByJobId(jobId)
-  const videoRef = useCameraStream(cameraEnabled)
+  const job = jobs.find((item) => String(item.id) === String(jobId)) || buildFallbackJobFromApplication(application) || {}
+  const technicalPlan = job?.hiringPlan?.technicalConfig || {}
+  const configuredDsaSqlTime = Number(
+    job?.hiringPlan?.dsaSqlTime
+      ?? technicalPlan?.dsaSqlTime
+      ?? technicalPlan?.timeLimitMinutes
+      ?? 0
+  ) || null
+  const videoRef = useRef(null)
+  const forcedStage = location.state?.forceStage || null
+  const currentTechnicalQuestion = technicalQuestions[currentTechnicalIndex] || null
 
-  if (!job) {
-    return (
-      <div className="p-8">
-        <p className="text-gray-600">Job not found</p>
-      </div>
-    )
-  }
-
-  if (!application) {
-    return (
-      <div className="p-8">
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold"
-        >
-          <ArrowLeft size={20} />
-          <span>Back</span>
-        </button>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-10 text-center">
-          <ShieldCheck size={48} className="mx-auto text-blue-600" />
-          <h1 className="text-3xl font-bold text-gray-800 mt-4">Apply first to unlock the assessment</h1>
-          <p className="text-gray-600 mt-2">Upload your resume from the job detail page and the next recruiter-configured round will appear here.</p>
-          <button
-            onClick={() => navigate(`/candidate/jobs/${job.id}`)}
-            className="mt-6 px-6 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all"
-          >
-            Go to Job Detail
-          </button>
-        </div>
-      </div>
-    )
-  }
-
+  const roundSequence = getRoundSequence(job)
   const completedStages = application?.progress || []
-  const currentStage = application?.currentStage || getNextRound(job, completedStages)
-  const roundSequence = useMemo(() => getRoundSequence(job), [job])
-  const resumeUploaded = Boolean(application?.resumeScore != null || (application?.resumeStatus && application.resumeStatus !== 'PENDING'))
-  const resumeRejected = Boolean(application?.resumeStatus === 'REJECTED' || application?.overallStatus === 'RESUME_REJECTED')
-  const resumeLabel = application?.resumeFileName || (resumeUploaded ? 'Resume uploaded' : 'No resume uploaded yet')
+  const currentStage = forcedStage || application?.currentStage || getNextRound(job, completedStages)
+  const resumeUploaded = Boolean(application?.resumeFileName)
+  const resumeRejected = Boolean(application && (application.resumeStatus === 'REJECTED' || application.overallStatus === 'RESUME_REJECTED'))
+  const resumeLabel = application?.resumeFileName || 'Not uploaded'
+  const aptitudeFailed = application?.aptitudeStatus === 'FAILED' || application?.overallStatus === 'REJECTED'
+  const allTechnicalQuestionsSubmitted = technicalQuestions.length > 0 && technicalQuestions.every((question) => successfulSubmissionByQuestionId[question.id])
 
-  const handleCompleteStage = async (stageKey, score = 100) => {
-    await completeRound(job.id, job, stageKey, score)
+  const handleStartTechnicalRound = async () => {
+    navigate(`/candidate/technical/${job.id}`, { replace: false })
   }
 
-  const handleUpdateResume = async () => {
-    if (!updateResumeFile) {
-      setUpdateError('Please select a file')
+  const handleNextTechnicalQuestion = () => {
+    setCurrentTechnicalIndex((i) => Math.min(i + 1, technicalQuestions.length - 1))
+  }
+
+  const handlePreviousTechnicalQuestion = () => {
+    setCurrentTechnicalIndex((i) => Math.max(i - 1, 0))
+  }
+
+  const handleSubmitCurrentQuestion = async () => {
+    const question = currentTechnicalQuestion
+    if (!question?.id) return
+    setSubmittingQuestionId(question.id)
+    try {
+      const tcRes = await fetch(`${QUESTION_SERVICE_URL}/${question.id}/test-cases`)
+      if (!tcRes.ok) throw new Error(`Failed to load test cases: ${tcRes.status}`)
+      const testcases = await tcRes.json()
+
+      const payload = {
+        language: languageByQuestionId[question.id] || getDefaultLanguage(question),
+        questionId: question.id,
+        code: codeByQuestionId[question.id] || getStarterCode(question, languageByQuestionId[question.id] || getDefaultLanguage(question)),
+        testCases: testcases
+      }
+
+      const res = await fetch(`${EXECUTION_SERVICE_URL}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `Submit failed: ${res.status}`)
+      }
+
+      const json = await res.json()
+      setRunResultByQuestionId((curr) => ({ ...curr, [question.id]: normalizeRoundResults(json) }))
+    } catch (err) {
+      alert(err.message || 'Submit failed')
+    } finally {
+      setSubmittingQuestionId(null)
+    }
+  }
+
+  const startAptitude = () => {
+    if (!application?.id) {
+      alert('Application not found for aptitude round.')
       return
     }
 
-    setUpdatingResume(true)
-    setUpdateError('')
-    
+    navigate(`/candidate/aptitude/${application.id}`, {
+      state: {
+        jobId: job?.id,
+        aptitudeTime: job?.hiringPlan?.aptitudeTime || 20,
+      },
+    })
+  }
+
+  const handleRunQuestion = async (question) => {
+    if (!question?.id) return
+    setRunningQuestionId(question.id)
     try {
-      const formData = new FormData()
-      formData.append('resume_file', updateResumeFile)
-
-      const response = await authenticatedFetch(
-        `http://localhost:8083/api/applications/${application.id}/evaluate-resume-ai`,
-        {
-          method: 'POST',
-          body: formData
-        }
-      )
-
-      if (!response.ok) {
-        let detail = `HTTP ${response.status}`
-        try {
-          const errorPayload = await response.json()
-          detail = errorPayload?.message || errorPayload?.detail || detail
-        } catch {}
-        throw new Error(`Resume update failed: ${detail}`)
+      const payload = {
+        language: languageByQuestionId[question.id] || getDefaultLanguage(question),
+        questionId: question.id,
+        code: codeByQuestionId[question.id] || getStarterCode(question, languageByQuestionId[question.id] || getDefaultLanguage(question)),
+        testCases: question.visibleTestCases || []
       }
 
-      // Close modal and refresh
-      setShowUpdateResumeModal(false)
-      setUpdateResumeFile(null)
-      // Reload applications to reflect updated resume
-      window.location.reload()
+      const res = await fetch(`${EXECUTION_SERVICE_URL}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      if (!res.ok) {
+        const txt = await res.text()
+        throw new Error(txt || `Run failed: ${res.status}`)
+      }
+
+      const json = await res.json()
+      setRunResultByQuestionId((curr) => ({ ...curr, [question.id]: normalizeRoundResults(json) }))
+      setSuccessfulSubmissionByQuestionId((curr) => ({ ...curr, [question.id]: false }))
     } catch (err) {
-      setUpdateError(err.message || 'Failed to update resume')
+      alert(err.message || 'Run failed')
     } finally {
-      setUpdatingResume(false)
+      setRunningQuestionId(null)
     }
   }
 
-  // Start aptitude round: initialize timer from job config
-  const startAptitude = () => {
-    // Ask backend to start aptitude; navigate only if successful
-    ;(async () => {
-      try {
-        if (!application?.id) throw new Error('Application not found')
-        const res = await authenticatedFetch(`http://localhost:8083/api/applications/${application.id}/round/aptitude/start`, { method: 'POST' })
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`
-          try {
-            const payload = await res.json()
-            msg = payload?.message || payload?.detail || msg
-          } catch {}
-          throw new Error(msg)
-        }
-        // started successfully — navigate to aptitude page
-        navigate(`/candidate/aptitude/${application.id}`)
-      } catch (err) {
-        // show inline error box by setting a temporary error state
-        alert(err.message || 'Failed to start aptitude')
-      }
-    })()
+  const handleSubmitTechnicalRound = async () => {
+    if (!allTechnicalQuestionsSubmitted) {
+      setUpdateError('Submit each coding question to verify hidden test cases before completing the round.')
+      return
+    }
+
+    setSubmittingTechnical(true)
+    try {
+      // mark technical round complete (fallback behavior uses completeRound from context)
+      await completeRound(job.id, job, 'dsaSql', 100)
+      setUpdateError('')
+    } catch (err) {
+      alert(err.message || 'Failed to submit technical round')
+    } finally {
+      setSubmittingTechnical(false)
+    }
   }
 
-  // Aptitude timer effect
-  useEffect(() => {
-    if (!aptStarted || aptRemainingSeconds <= 0) return
-    const t = setInterval(() => setAptRemainingSeconds((s) => s - 1), 1000)
-    return () => clearInterval(t)
-  }, [aptStarted, aptRemainingSeconds])
+          const stageCards = roundSequence.map((stageKey) => {
+        // avoid performing state updates during render; validation is handled when submitting
 
-  // Auto-submit when timer ends
-  useEffect(() => {
-    if (aptStarted && aptRemainingSeconds <= 0) {
-      // For now, every candidate passes aptitude
-      handleCompleteStage('aptitude', 100)
-    }
-  }, [aptRemainingSeconds, aptStarted])
-
-  // Initialize code answers/outputs when entering dsaSql
-  useEffect(() => {
-    if (currentStage === 'dsaSql') {
-      const count = job.hiringPlan?.dsaQuestions || dsaPrompts.length
-      setCodeAnswers(Array(count).fill('// write your code here'))
-      setCodeOutputs(Array(count).fill(''))
-    }
-  }, [currentStage, job])
-
-  const stageCards = roundSequence.map((stageKey) => {
     const meta = stageMeta[stageKey]
     const Icon = meta.icon
     const completed = completedStages.includes(stageKey)
@@ -254,10 +334,7 @@ export default function CandidateApplicationFlow() {
 
   return (
     <div className="p-8">
-      <button
-        onClick={() => navigate(-1)}
-          className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold"
-      >
+      <button onClick={() => navigate('/candidate/applications')} className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold">
         <ArrowLeft size={20} />
         <span>Back</span>
       </button>
@@ -299,6 +376,12 @@ export default function CandidateApplicationFlow() {
               <h2 className="text-2xl font-bold text-gray-800 mt-4">You are not shortlisted</h2>
               <p className="text-gray-600 mt-2">Your resume score did not meet the threshold for this role, so the aptitude round is locked and the resume cannot be updated.</p>
             </div>
+          ) : aptitudeFailed ? (
+            <div className="text-center py-10">
+              <ShieldCheck size={48} className="mx-auto text-red-600" />
+              <h2 className="text-2xl font-bold text-gray-800 mt-4">Failed to clear aptitude round</h2>
+              <p className="text-gray-600 mt-2">You need at least 65% to pass aptitude. This application is now marked as failed.</p>
+            </div>
           ) : currentStage === null ? (
             <div className="text-center py-10">
               <CheckCircle2 size={48} className="mx-auto text-green-600" />
@@ -330,60 +413,19 @@ export default function CandidateApplicationFlow() {
                 <h2 className="text-2xl font-bold text-gray-800">Aptitude Round</h2>
               </div>
 
-              {!aptStarted ? (
-                <div className="rounded-lg border p-6 bg-white">
-                  <p className="mb-4 text-sm text-gray-600">Instructions</p>
-                  <ul className="list-disc pl-5 text-sm text-gray-700 space-y-2 mb-4">
-                    <li>Read each question carefully and select the best answer.</li>
-                    <li>You will have <strong>{job.hiringPlan?.aptitudeTime || 20} minutes</strong> to complete this round.</li>
-                    <li>Your camera may be activated for proctoring (optional).</li>
-                    <li>For now, everyone passes this round—results are provisional.</li>
-                  </ul>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <label className="inline-flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={cameraEnabled} onChange={(e) => setCameraEnabled(e.target.checked)} />
-                        <span className="text-sm text-gray-600">Enable camera</span>
-                      </label>
-                    </div>
-                    <button onClick={startAptitude} className="px-6 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold">Start Aptitude</button>
-                  </div>
+              <div className="rounded-lg border p-6 bg-white">
+                <p className="mb-4 text-sm text-gray-600">Instructions</p>
+                <ul className="list-disc pl-5 text-sm text-gray-700 space-y-2 mb-4">
+                  <li>Read each question carefully and select the best answer.</li>
+                  <li>You will have <strong>{job.hiringPlan?.aptitudeTime || 20} minutes</strong> to complete this round.</li>
+                  <li>The camera opens on the aptitude screen and stays hidden from view.</li>
+                  <li>Questions are fetched from the aptitude service when you start.</li>
+                </ul>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-500">You will be redirected to the live aptitude test page.</div>
+                  <button onClick={startAptitude} className="px-6 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold">Start Aptitude</button>
                 </div>
-              ) : (
-                <div>
-                  <div className="mb-4 rounded-lg bg-blue-50 p-4 border border-blue-100 text-sm text-blue-900">
-                    Questions: {job.hiringPlan.aptitudeQuestions} • Type: {job.hiringPlan.aptitudeQuestionType} • Topics: {job.hiringPlan.aptitudeTopics}
-                    <div className="mt-2 font-mono text-sm">Time left: {Math.max(0, Math.floor(aptRemainingSeconds / 60))}:{String(Math.max(0, aptRemainingSeconds % 60)).padStart(2, '0')}</div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {aptitudeQuestions.map((item, index) => (
-                      <div key={item.question} className="rounded-lg border border-gray-200 p-4">
-                        <p className="font-semibold text-gray-800 mb-3">{index + 1}. {item.question}</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {item.options.map((option) => (
-                            <label key={option} className={`flex items-center gap-2 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${answers[index] === option ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                              <input
-                                type="radio"
-                                name={`aptitude-${index}`}
-                                value={option}
-                                checked={answers[index] === option}
-                                onChange={() => setAnswers((current) => ({ ...current, [index]: option }))}
-                              />
-                              <span className="text-sm text-gray-700">{option}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center gap-3 mt-6">
-                    <button onClick={() => handleCompleteStage('aptitude', 100)} className="px-6 py-3 rounded-lg btn-cta">Submit Aptitude Round</button>
-                    <button onClick={() => { setAptStarted(false); setAptRemainingSeconds(0) }} className="px-4 py-2 rounded-lg border">Cancel</button>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           ) : currentStage === 'dsaSql' ? (
             <div>
@@ -391,41 +433,192 @@ export default function CandidateApplicationFlow() {
                 <Code2 size={24} className="text-purple-600" />
                 <h2 className="text-2xl font-bold text-gray-800">DSA + SQL Round</h2>
               </div>
-              <div className="mb-4 rounded-lg bg-purple-50 p-4 border border-purple-100 text-sm text-purple-900">
-                DSA Questions: {job.hiringPlan.dsaQuestions} ({job.hiringPlan.dsaDifficulty || 'medium'}) • SQL Questions: {job.hiringPlan.sqlQuestions} ({job.hiringPlan.sqlDifficulty || 'medium'}) • DSA Topics: {job.hiringPlan.dsaTopics} • SQL Topics: {job.hiringPlan.sqlTopics} • Time: {job.hiringPlan.dsaSqlTime} mins
+              <div className="mb-4 rounded-lg bg-purple-50 p-4 border border-purple-100 text-sm text-purple-900 space-y-1">
+                <div>Questions are loaded from the seeded DSA question service.</div>
+                <div>Run uses visible tests only. Submit evaluates visible plus hidden tests.</div>
+                <div>Time limit: {configuredDsaSqlTime ? `${configuredDsaSqlTime} mins` : 'Not configured'}</div>
               </div>
 
-              <div className="space-y-4">
-                {dsaPrompts.map((prompt, index) => (
-                  <div key={prompt} className="rounded-lg border border-gray-200 p-4">
-                    <p className="font-semibold text-gray-800 mb-3">DSA Question {index + 1}</p>
-                    <p className="text-sm text-gray-600">{prompt}</p>
-                    <textarea
-                      value={dsaAnswer}
-                      onChange={(event) => setDsaAnswer(event.target.value)}
-                      placeholder="Write your solution approach here"
-                      className="mt-3 w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 h-28"
-                    />
-                  </div>
-                ))}
-
-                <div className="rounded-lg border border-gray-200 p-4">
-                  <p className="font-semibold text-gray-800 mb-3">SQL Question</p>
-                  <p className="text-sm text-gray-600 mb-3">Write a query to find candidates who have completed all enabled rounds.</p>
-                  <textarea
-                    value={sqlAnswer}
-                    onChange={(event) => setSqlAnswer(event.target.value)}
-                    placeholder="Write your SQL query here"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 h-28"
-                  />
+              {!technicalRoundStarted && technicalQuestions.length === 0 ? (
+                <div className="rounded-lg border border-purple-200 bg-purple-50 p-6">
+                  <p className="text-sm text-purple-900 mb-4">You have cleared aptitude. Click below to start the DSA + SQL round and load your coding questions.</p>
+                  <button
+                    onClick={handleStartTechnicalRound}
+                    className="px-6 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white font-semibold hover:from-purple-700 hover:to-fuchsia-700 transition-all"
+                  >
+                    Start DSA + SQL Round
+                  </button>
                 </div>
-              </div>
+              ) : technicalLoading ? (
+                <div className="rounded-lg border border-gray-200 bg-white p-6 text-gray-600">Loading coding questions...</div>
+              ) : technicalError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-red-800">{technicalError}</div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-purple-600 font-semibold">Question {currentTechnicalIndex + 1} of {technicalQuestions.length}</p>
+                      <p className="text-sm text-gray-600 mt-1">Use Next to skip or Previous to review earlier work.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handlePreviousTechnicalQuestion}
+                        disabled={currentTechnicalIndex === 0}
+                        className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-semibold disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={handleNextTechnicalQuestion}
+                        disabled={currentTechnicalIndex >= technicalQuestions.length - 1}
+                        className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-semibold disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+
+                  {currentTechnicalQuestion && (
+                    <div key={currentTechnicalQuestion.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-purple-600 font-semibold">{currentTechnicalQuestion.topic} • {currentTechnicalQuestion.difficulty}</p>
+                          <h3 className="text-xl font-bold text-gray-800 mt-1">{currentTechnicalIndex + 1}. {currentTechnicalQuestion.title}</h3>
+                        </div>
+                        <div className="text-right text-xs text-gray-500">
+                          <div>{currentTechnicalQuestion.timeLimitMs} ms</div>
+                          <div>{currentTechnicalQuestion.memoryLimitMb} MB</div>
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-gray-700 leading-6 whitespace-pre-line">{currentTechnicalQuestion.statement}</p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 text-sm">
+                        <div className="rounded-lg bg-gray-50 p-4 border border-gray-100">
+                          <p className="font-semibold text-gray-800 mb-2">Constraints</p>
+                          <p className="text-gray-600 whitespace-pre-line">{currentTechnicalQuestion.constraintsText}</p>
+                        </div>
+                        <div className="rounded-lg bg-gray-50 p-4 border border-gray-100">
+                          <p className="font-semibold text-gray-800 mb-2">Input / Output</p>
+                          <p className="text-gray-600 whitespace-pre-line"><span className="font-semibold text-gray-700">Input:</span> {currentTechnicalQuestion.inputFormat}</p>
+                          <p className="text-gray-600 whitespace-pre-line mt-2"><span className="font-semibold text-gray-700">Output:</span> {currentTechnicalQuestion.outputFormat}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+                        <p className="font-semibold text-blue-900 mb-2">Visible Test Cases</p>
+                        <div className="space-y-2 text-sm text-blue-950">
+                          {(currentTechnicalQuestion.visibleTestCases || []).map((testCase, testIndex) => (
+                            <div key={testCase.id || testIndex} className="rounded-md bg-white/80 border border-blue-100 p-3">
+                              <div className="font-mono text-xs text-blue-700 mb-1">Input</div>
+                              <pre className="whitespace-pre-wrap font-mono text-xs text-gray-800">{testCase.inputData}</pre>
+                              <div className="font-mono text-xs text-blue-700 mt-2 mb-1">Expected Output</div>
+                              <pre className="whitespace-pre-wrap font-mono text-xs text-gray-800">{testCase.expectedOutput}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <label className="text-sm font-semibold text-gray-700">Language</label>
+                        <select
+                          value={languageByQuestionId[currentTechnicalQuestion.id] || getDefaultLanguage(currentTechnicalQuestion)}
+                          onChange={(event) => {
+                            const nextLanguage = event.target.value
+                            setLanguageByQuestionId((current) => ({ ...current, [currentTechnicalQuestion.id]: nextLanguage }))
+                            setCodeByQuestionId((current) => ({
+                              ...current,
+                              [currentTechnicalQuestion.id]: getStarterCode(currentTechnicalQuestion, nextLanguage)
+                            }))
+                          }}
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                        >
+                          {currentTechnicalQuestion.topic === 'SQL' ? (
+                            <option value="sql">SQL</option>
+                          ) : (
+                            <>
+                              <option value="python">Python</option>
+                              <option value="cpp">C++</option>
+                              <option value="java">Java</option>
+                            </>
+                          )}
+                        </select>
+                        <button
+                          onClick={() => handleRunQuestion(currentTechnicalQuestion)}
+                          disabled={runningQuestionId === currentTechnicalQuestion.id || submittingQuestionId === currentTechnicalQuestion.id}
+                          className="px-5 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold disabled:opacity-60"
+                        >
+                          {runningQuestionId === currentTechnicalQuestion.id ? 'Running...' : 'Run'}
+                        </button>
+                        <button
+                          onClick={handleSubmitCurrentQuestion}
+                          disabled={submittingQuestionId === currentTechnicalQuestion.id || runningQuestionId === currentTechnicalQuestion.id}
+                          className="px-5 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold disabled:opacity-60"
+                        >
+                          {submittingQuestionId === currentTechnicalQuestion.id ? 'Submitting...' : 'Submit Question'}
+                        </button>
+                      </div>
+
+                      <textarea
+                        value={codeByQuestionId[currentTechnicalQuestion.id] || getStarterCode(currentTechnicalQuestion, languageByQuestionId[currentTechnicalQuestion.id] || getDefaultLanguage(currentTechnicalQuestion))}
+                        onChange={(event) => setCodeByQuestionId((current) => ({ ...current, [currentTechnicalQuestion.id]: event.target.value }))}
+                        className="mt-4 w-full h-72 rounded-xl border border-gray-300 bg-white px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        spellCheck="false"
+                      />
+
+                      {runResultByQuestionId[currentTechnicalQuestion.id] && (
+                        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="font-semibold">Run Result: {runResultByQuestionId[currentTechnicalQuestion.id].verdict}</div>
+                            <div className="text-xs text-emerald-800">{runResultByQuestionId[currentTechnicalQuestion.id].passed} / {runResultByQuestionId[currentTechnicalQuestion.id].total} passed {runResultByQuestionId[currentTechnicalQuestion.id].executionTimeMs ? `• ${runResultByQuestionId[currentTechnicalQuestion.id].executionTimeMs} ms` : ''}</div>
+                          </div>
+                          {runResultByQuestionId[currentTechnicalQuestion.id].results?.length > 0 ? (
+                            <div className="space-y-3 mt-3">
+                              {runResultByQuestionId[currentTechnicalQuestion.id].results.map((result, resultIndex) => (
+                                <div key={`${currentTechnicalQuestion.id}-${resultIndex}`} className={`rounded-lg border p-3 ${result.passed ? 'border-emerald-200 bg-white' : 'border-red-200 bg-white'}`}>
+                                  <div className="flex items-center justify-between gap-2 mb-2 text-xs font-semibold uppercase tracking-wide">
+                                    <span className={result.hidden ? 'text-amber-700' : 'text-sky-700'}>{result.hidden ? 'Hidden Test' : 'Visible Test'} {resultIndex + 1}</span>
+                                    <span className={result.passed ? 'text-emerald-700' : 'text-red-700'}>{result.passed ? 'Passed' : 'Failed'}</span>
+                                  </div>
+                                  {result.hidden ? (
+                                    <div className={`rounded-md border px-3 py-2 text-xs font-semibold ${result.passed ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-red-200 text-red-700 bg-red-50'}`}>
+                                      {result.passed ? 'Hidden test case passed' : 'Hidden test case failed'}
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                                      <div>
+                                        <div className="font-semibold text-gray-600 mb-1">Input</div>
+                                        <pre className="whitespace-pre-wrap font-mono bg-gray-50 rounded-md p-2 border border-gray-100 text-gray-800">{result.inputData}</pre>
+                                      </div>
+                                      <div>
+                                        <div className="font-semibold text-gray-600 mb-1">Expected</div>
+                                        <pre className="whitespace-pre-wrap font-mono bg-gray-50 rounded-md p-2 border border-gray-100 text-gray-800">{result.expectedOutput}</pre>
+                                      </div>
+                                      <div>
+                                        <div className="font-semibold text-gray-600 mb-1">Actual</div>
+                                        <pre className="whitespace-pre-wrap font-mono bg-gray-50 rounded-md p-2 border border-gray-100 text-gray-800">{result.actualOutput}</pre>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {runResultByQuestionId[currentTechnicalQuestion.id].stdout ? <pre className="whitespace-pre-wrap font-mono text-xs bg-white/70 border border-emerald-100 p-3 rounded-md mt-3">{runResultByQuestionId[currentTechnicalQuestion.id].stdout}</pre> : null}
+                          {runResultByQuestionId[currentTechnicalQuestion.id].stderr ? <pre className="whitespace-pre-wrap font-mono text-xs bg-white/70 border border-emerald-100 p-3 rounded-md mt-3 text-red-700">{runResultByQuestionId[currentTechnicalQuestion.id].stderr}</pre> : null}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button
-                onClick={() => handleCompleteStage('dsaSql', 88)}
-                className="mt-6 px-6 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white font-semibold hover:from-purple-700 hover:to-fuchsia-700 transition-all"
+                onClick={handleSubmitTechnicalRound}
+                disabled={submittingTechnical || technicalQuestions.length === 0 || !allTechnicalQuestionsSubmitted}
+                className="mt-6 px-6 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white font-semibold hover:from-purple-700 hover:to-fuchsia-700 transition-all disabled:opacity-60"
               >
-                Submit DSA + SQL Round
+                {submittingTechnical ? 'Submitting...' : allTechnicalQuestionsSubmitted ? 'Submit DSA + SQL Round' : 'Submit hidden tests first'}
               </button>
             </div>
           ) : currentStage === 'aiInterview' ? (

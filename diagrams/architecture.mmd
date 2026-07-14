@@ -1,0 +1,56 @@
+flowchart LR
+  %% Clients
+  F["Frontend (React / Vite)"]
+
+  %% Services
+  AUTH["Auth Service (OAuth / JWT)"]
+  AS["Application Service (Spring Boot)"]
+  JS["Job Service (Spring Boot)"]
+  QS["Question Service (FastAPI / dsaquestionservice)"]
+  ES["Execution Service (FastAPI)"]
+  EW["Execution Worker Pool (Docker / K8s Jobs)"]
+  AI["AI Service (optional)"]
+
+  %% Infrastructure
+  KAFKA["Kafka / RabbitMQ"]
+  PG["Postgres DB"]
+  REDIS["Redis Cache"]
+  S3["S3 / MinIO"]
+  MON["Prometheus + Grafana / ELK"]
+
+  %% Frontend interactions (REST)
+  F --> AS
+  F --> AUTH
+  F --> QS
+  F --> ES
+
+  %% Application orchestration
+  AS --> JS
+  AS --> QS
+  AS --> KAFKA
+
+  %% Execution flow
+  AS --> KAFKA
+  ES --> KAFKA
+  KAFKA --> EW
+  EW --> EW
+  EW --> KAFKA
+  KAFKA --> ES
+
+  %% Result persistence / notifications
+  ES --> AS
+  AS --> PG
+  QS --> PG
+  ES --> S3
+
+  %% Caching and observability
+  AS --> REDIS
+  QS --> REDIS
+  ES --> REDIS
+  ALL_SERVICES["AUTH & AS & JS & QS & ES & AI"] --> MON
+
+  %% Optional AI and other flows
+  ES --> AI
+  F --> WS["WebSocket / SignalR"]
+
+  %% simplified: classDefs removed for compatibility with mermaid-cli

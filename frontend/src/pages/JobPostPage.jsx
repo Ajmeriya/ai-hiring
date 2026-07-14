@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useJobs } from '../context/JobContext.jsx'
+import { JOB_SERVICE_URL } from '../config/serviceUrls.js'
 import { Sparkles, ClipboardList, Target, Layers, Clock3, X, ArrowLeft, CheckCircle2 } from 'lucide-react'
 
 export default function JobPostPage() {
@@ -86,7 +87,7 @@ export default function JobPostPage() {
         } : null
       }
 
-      const response = await fetch('http://localhost:8082/api/jobs', {
+      const response = await fetch(JOB_SERVICE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

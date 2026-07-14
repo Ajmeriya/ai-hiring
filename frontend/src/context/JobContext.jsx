@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { authenticatedFetch } from '../api/authApi.js'
+import { JOB_SERVICE_URL } from '../config/serviceUrls.js'
 
 const JobContext = createContext(null)
+const fallbackJobsContext = {
+  jobs: [],
+  addJob: () => {},
+  updateJob: () => {}
+}
 
 function getInitialJobs() {
   return []
@@ -16,7 +22,7 @@ export function JobProvider({ children }) {
 
     async function loadJobs() {
       try {
-        const res = await authenticatedFetch('http://localhost:8082/api/jobs')
+        const res = await authenticatedFetch(JOB_SERVICE_URL)
         if (!res.ok) {
           console.error('Failed to load jobs from backend')
           return
@@ -107,9 +113,5 @@ export function JobProvider({ children }) {
 export function useJobs() {
   const context = useContext(JobContext)
 
-  if (!context) {
-    throw new Error('useJobs must be used within a JobProvider')
-  }
-
-  return context
+  return context || fallbackJobsContext
 }

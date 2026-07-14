@@ -25,15 +25,36 @@ class GeminiClient:
             return
         
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            # gemini-pro is no longer available in the current API surface.
-            # Use a supported model so evaluation requests do not fail with 404.
-            self.client = genai.GenerativeModel('gemini-1.5-flash')
-            logger.info("Gemini client initialized successfully")
+            # Prefer the newer `google.genai` package if available.
+            try:
+                import google.genai as genai  # type: ignore
+                genai.configure(api_key=self.api_key)
+                src = "google.genai"
+            except Exception:
+                import google.generativeai as genai  # type: ignore
+                genai.configure(api_key=self.api_key)
+                src = "google.generativeai"
+
+            # Attempt to create a model handle; fall back to module if API differs.
+            try:
+                self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+                self.client = genai.GenerativeModel(self.model_name)
+            except Exception:
+                # Some client variants expose different APIs; keep the module
+                # reference so callers can still attempt to use it.
+                self.client = genai
+
+            logger.info(f"Gemini client initialized using {src}")
         except Exception as e:
             logger.error(f"Failed to initialize Gemini client: {str(e)}")
             self.client = None
+
+        # Import permission-related exception class if available for clearer logs
+        try:
+            import google.api_core.exceptions as api_exceptions  # type: ignore
+            self._api_exceptions = api_exceptions
+        except Exception:
+            self._api_exceptions = None
     
     def evaluate_projects(self, projects: list, job_requirements: Dict) -> Dict:
         """
@@ -90,14 +111,32 @@ WEAKNESSES:
 INSIGHTS: [insights]
 """
             
-            response = self.client.generate_content(prompt)
-            result = self._parse_gemini_response(response.text)
+            # Try several common method names across client versions.
+            if hasattr(self.client, "generate_content"):
+                response = self.client.generate_content(prompt)
+                text = getattr(response, "text", str(response))
+            elif hasattr(self.client, "generate"):
+                response = self.client.generate(prompt)
+                text = getattr(response, "text", str(response))
+            else:
+                # Last resort: call module-level convenience if present
+                if hasattr(self.client, "generate_text"):
+                    text = self.client.generate_text(prompt)
+                else:
+                    raise RuntimeError("Gemini client does not expose a known generate method")
+
+            result = self._parse_gemini_response(text)
             result['evaluated'] = True
             logger.info(f"Gemini project evaluation: {result.get('score', 0)}")
             return result
-            
         except Exception as e:
-            logger.error(f"Error evaluating projects: {str(e)}")
+            # Detect permission/invalid-key errors and log actionable message
+            if self._api_exceptions and isinstance(e, getattr(self._api_exceptions, 'PermissionDenied', Exception)):
+                logger.error("PermissionDenied from Gemini API: API key may be revoked or blocked. Rotate the API key.")
+            elif "PermissionDenied" in str(e) or "leaked" in str(e).lower():
+                logger.error("Gemini API rejected the request: API key may be revoked or reported leaked. Rotate the API key.")
+            else:
+                logger.error(f"Error evaluating projects: {str(e)}")
             return {
                 'evaluated': False,
                 'score': 0,
@@ -153,13 +192,44 @@ ASSESSMENT: [assessment]
 """
             
             response = self.client.generate_content(prompt)
-            result = self._parse_gemini_cert_response(response.text)
+            try:
+                if hasattr(self.client, "generate_content"):
+                    response = self.client.generate_content(prompt)
+                    text = getattr(response, "text", str(response))
+                elif hasattr(self.client, "generate"):
+                    response = self.client.generate(prompt)
+                    text = getattr(response, "text", str(response))
+                else:
+                    if hasattr(self.client, "generate_text"):
+                        text = self.client.generate_text(prompt)
+                    else:
+                        raise RuntimeError("Gemini client does not expose a known generate method")
+
+                result = self._parse_gemini_cert_response(text)
+            except Exception as e:
+                if self._api_exceptions and isinstance(e, getattr(self._api_exceptions, 'PermissionDenied', Exception)):
+                    logger.error("PermissionDenied from Gemini API: API key may be revoked or blocked. Rotate the API key.")
+                elif "PermissionDenied" in str(e) or "leaked" in str(e).lower():
+                    logger.error("Gemini API rejected the request: API key may be revoked or reported leaked. Rotate the API key.")
+                else:
+                    logger.error(f"Error evaluating certifications: {str(e)}")
+                return {
+                    'evaluated': False,
+                    'score': 0,
+                    'relevant': [],
+                    'missing': [],
+                    'assessment': f'Error: {str(e)}'
+                }
             result['evaluated'] = True
             logger.info(f"Gemini certification evaluation: {result.get('score', 0)}")
             return result
-            
         except Exception as e:
-            logger.error(f"Error evaluating certifications: {str(e)}")
+            if self._api_exceptions and isinstance(e, getattr(self._api_exceptions, 'PermissionDenied', Exception)):
+                logger.error("PermissionDenied from Gemini API: API key may be revoked or blocked. Rotate the API key.")
+            elif "PermissionDenied" in str(e) or "leaked" in str(e).lower():
+                logger.error("Gemini API rejected the request: API key may be revoked or reported leaked. Rotate the API key.")
+            else:
+                logger.error(f"Error evaluating certifications: {str(e)}")
             return {
                 'evaluated': False,
                 'score': 0,

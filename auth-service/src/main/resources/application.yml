@@ -1,13 +1,13 @@
 server:
-  port: 8081
+  port: ${SERVER_PORT:8083}
 
 spring:
   application:
     name: auth-service
   datasource:
-    url: jdbc:mysql://localhost:3306/ai_hiring_auth
-    username: root
-    password: Harsh@101845
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://mysql:3306/ai_hiring_auth}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:Harsh@101845}
   jpa:
     hibernate:
       ddl-auto: update
@@ -20,8 +20,33 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  mail:
+    host: ${SPRING_MAIL_HOST:smtp.gmail.com}
+    port: ${SPRING_MAIL_PORT:587}
+    username: ${SPRING_MAIL_USERNAME:YOUR_GMAIL_ADDRESS}
+    password: ${SPRING_MAIL_PASSWORD:YOUR_GMAIL_APP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          transport:
+            protocol: smtp
+          auth.mechanisms: LOGIN PLAIN
+          starttls:
+            enable: true
+            required: true
+          ssl:
+            trust: smtp.gmail.com
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+          debug: true
+
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+
 application:
   security:
     jwt:
-      secret-key: "c2VjdXJlLWJhc2U2NC1zZWNyZXQtbWFrZS10aGlzLWxvbmdlci1mb3ItamV3dC1hdXRoLXNlcnZpY2UtMTIzNDU2Nzg5"
-      expiration: 86400000
+      secret-key: ${APPLICATION_SECURITY_JWT_SECRET_KEY:c2VjdXJlLWJhc2U2NC1zZWNyZXQtbWFrZS10aGlzLWxvbmdlci1mb3ItamV3dC1hdXRoLXNlcnZpY2UtMTIzNDU2Nzg5}
+      expiration: ${APPLICATION_SECURITY_JWT_EXPIRATION:86400000}

@@ -1,6 +1,7 @@
 import { Briefcase, Users, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
+import { APPLICATION_SERVICE_URL } from '../config/serviceUrls.js'
 
 export default function JobCard({ job }) {
   const [applicantsCount, setApplicantsCount] = useState(job.applicants || 0)
@@ -8,7 +9,7 @@ export default function JobCard({ job }) {
   useEffect(() => {
     const fetchApplicantsCount = async () => {
       try {
-        const response = await fetch(`http://localhost:8083/api/applications/job/${job.id}/count`)
+        const response = await fetch(`${APPLICATION_SERVICE_URL}/job/${job.id}/count`)
         if (response.ok) {
           const count = await response.json()
           setApplicantsCount(count)

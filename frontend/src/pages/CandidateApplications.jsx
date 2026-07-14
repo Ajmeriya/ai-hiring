@@ -38,7 +38,7 @@ export default function CandidateApplications() {
               </div>
 
               <Link
-                to={`/candidate/applications/${application.jobId}`}
+                to={application.currentStage === 'dsaSql' ? `/candidate/technical/${application.jobId}` : `/candidate/applications/${application.jobId}`}
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all"
               >
                 <PlayCircle size={18} />

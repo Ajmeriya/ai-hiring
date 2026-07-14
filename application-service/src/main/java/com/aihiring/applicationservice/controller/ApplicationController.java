@@ -2,6 +2,8 @@ package com.aihiring.applicationservice.controller;
 
 import com.aihiring.applicationservice.dto.ApplicationResponse;
 import com.aihiring.applicationservice.dto.CreateApplicationRequest;
+import com.aihiring.applicationservice.dto.TechnicalRunRequest;
+import com.aihiring.applicationservice.dto.TechnicalSubmissionRequest;
 import com.aihiring.applicationservice.service.ApplicationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -15,7 +17,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/applications")
-@CrossOrigin(origins = "http://localhost:3000")
 public class ApplicationController {
 
     private final ApplicationService applicationService;
@@ -107,6 +108,32 @@ public class ApplicationController {
             @PathVariable Long id,
             Authentication authentication) {
         var response = applicationService.startTechnicalRound(id);
+        if (response == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    // ===== 5B. Run Technical Question =====
+    @PostMapping("/{id}/round/technical/run")
+    public ResponseEntity<?> runTechnicalQuestion(
+            @PathVariable Long id,
+            @RequestBody TechnicalRunRequest request,
+            Authentication authentication) {
+        var response = applicationService.runTechnicalQuestion(id, request);
+        if (response == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    // ===== 5C. Submit Technical Round =====
+    @PostMapping("/{id}/round/technical/submit")
+    public ResponseEntity<?> submitTechnicalRound(
+            @PathVariable Long id,
+            @RequestBody TechnicalSubmissionRequest request,
+            Authentication authentication) {
+        var response = applicationService.submitTechnicalRound(id, request);
         if (response == null) {
             return ResponseEntity.notFound().build();
         }

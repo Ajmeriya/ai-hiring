@@ -20,6 +20,7 @@ public class DemoUserSeeder {
         };
     }
 
+    
     private void seedUserIfMissing(UserRepository userRepository,
                                    PasswordEncoder passwordEncoder,
                                    String email,

@@ -1,0 +1,6 @@
+{
+    "email":  "freshuser_$(Get-Date -Format yyyyMMddHHmmss)@example.com",
+    "fullName":  "Fresh User",
+    "password":  "Pass1234!",
+    "role":  "CANDIDATE"
+}

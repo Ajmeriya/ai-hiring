@@ -114,6 +114,7 @@ class GeminiQuestionGenerator:
     def __init__(self) -> None:
         self.client = None
         self.last_generation_source = "none"
+        self.gemini_disabled_reason: str | None = None
         if not config.GEMINI_API_KEY:
             logger.warning("Gemini API key missing. Question generation will use fallback templates only.")
             return
@@ -139,10 +140,19 @@ class GeminiQuestionGenerator:
     def generate(self, request: AptitudeQuestionRequest, count: int) -> list[dict]:
         categories = _resolve_categories(request.topics)
         normalized_difficulty = _normalize_difficulty(request.difficulty)
+        if self.gemini_disabled_reason:
+            logger.info("Gemini disabled for this process (%s); using fallback templates", self.gemini_disabled_reason)
+            self.last_generation_source = f"fallback:{self.gemini_disabled_reason}"
+            fallback_questions = self._fallback_questions(request, count)
+            for question in fallback_questions:
+                question["__source"] = "fallback"
+            logger.info("Question source=fallback reason=%s count=%s", self.gemini_disabled_reason, len(fallback_questions))
+            return fallback_questions
+
         prompt = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                '''You are an expert aptitude assessment generator used in enterprise AI hiring platforms.
+                        (
+                                "system",
+                                '''You are an expert aptitude assessment generator used in enterprise AI hiring platforms.
 Your task is to generate HIGH-QUALITY, NON-REPETITIVE aptitude questions for technical recruitment exams.
 
 STRICT OUTPUT RULES:
@@ -193,18 +203,16 @@ DIFFICULTY RULES:
 - Hard questions should require analytical reasoning.
 
 JSON FORMAT:
-[
-  {
-    "question": "string",
-    "options": ["A", "B", "C", "D"],
-    "correct_answer_index": 0,
-    "explanation": "short explanation",
-    "topic": "topic name",
-    "difficulty": "easy|medium|hard"
-  }
-]
+[{{
+        "question": "string",
+        "options": ["A", "B", "C", "D"],
+        "correct_answer_index": 0,
+        "explanation": "short explanation",
+        "topic": "topic name",
+        "difficulty": "easy|medium|hard"
+    }}]
 ''',
-            ),
+                        ),
             (
                 "human",
                 '''Generate {count} unique aptitude questions.
@@ -257,6 +265,12 @@ Generation Instructions:
                 }
             )
         except Exception as exc:
+            if "RESOURCE_EXHAUSTED" in str(exc).upper() or "quota exceeded" in str(exc).lower() or "Please retry in" in str(exc):
+                self.gemini_disabled_reason = "quota_exhausted"
+                logger.warning("Gemini quota exhausted; switching to fallback templates for the rest of this process")
+            elif "PermissionDenied" in str(exc) or "leaked" in str(exc).lower():
+                self.gemini_disabled_reason = "permission_denied"
+                logger.warning("Gemini permission denied; switching to fallback templates for the rest of this process")
             logger.exception("Gemini generation failed, falling back to templates: %s", exc)
             self.last_generation_source = "fallback:gemini_invoke_error"
             fallback_questions = self._fallback_questions(request, count)
@@ -467,6 +481,7 @@ class AptitudeQuestionService:
 
     def assign_questions(self, request: AptitudeQuestionRequest) -> AptitudeQuestionResponse:
         self._ensure_bank(request)
+        bank_size = self._bank_size(request.job_id)
 
         assigned_rows = fetch_all(
             """
@@ -492,7 +507,7 @@ class AptitudeQuestionService:
                 applicationId=request.application_id,
                 jobId=request.job_id,
                 count=request.count,
-                poolSize=max(request.count * config.POOL_MULTIPLIER, request.count),
+                poolSize=max(request.count, bank_size),
                 bankSize=bank_size,
                 generatedCount=0,
                 questions=questions,
@@ -504,6 +519,7 @@ class AptitudeQuestionService:
                    correct_answer_index, explanation, topic, difficulty, source
             FROM aptitude_question_bank
             WHERE job_id = %s
+              AND id NOT IN (SELECT question_id FROM aptitude_question_assignments)
             ORDER BY RAND()
             LIMIT %s
             """,
@@ -517,6 +533,29 @@ class AptitudeQuestionService:
                 source = str(row.get("source") or "db")
                 source_summary[source] = source_summary.get(source, 0) + 1
             logger.info("Question source=db-random applicationId=%s summary=%s", request.application_id, source_summary)
+
+        # If we couldn't find enough *unassigned* questions, allow reuse as a last resort
+        if not selection:
+            logger.info("No unassigned questions available for job %s; attempting to reuse assigned questions as fallback", request.job_id)
+            fallback_pool = fetch_all(
+                """
+                SELECT id, question_text, option_a, option_b, option_c, option_d,
+                       correct_answer_index, explanation, topic, difficulty, source
+                FROM aptitude_question_bank
+                WHERE job_id = %s
+                ORDER BY RAND()
+                LIMIT %s
+                """,
+                (request.job_id, max(request.count * 8, 40)),
+            )
+
+            selection = self._select_diverse_questions(fallback_pool, request.count)
+            if selection:
+                source_summary: dict[str, int] = {}
+                for row in selection:
+                    source = str(row.get("source") or "db")
+                    source_summary[source] = source_summary.get(source, 0) + 1
+                logger.info("Question source=db-reuse-assigned applicationId=%s summary=%s", request.application_id, source_summary)
 
         if not selection:
             raise ValueError("Unable to generate aptitude questions for this job")
@@ -538,14 +577,14 @@ class AptitudeQuestionService:
             applicationId=request.application_id,
             jobId=request.job_id,
             count=request.count,
-            poolSize=max(request.count * config.POOL_MULTIPLIER, request.count),
+            poolSize=max(request.count, bank_size),
             bankSize=bank_size,
             generatedCount=0,
             questions=questions,
         )
 
     def _ensure_bank(self, request: AptitudeQuestionRequest) -> None:
-        target_pool = max(request.count * config.POOL_MULTIPLIER, request.count)
+        target_pool = request.count
         current_size = self._bank_size(request.job_id)
 
         if current_size and self._bank_needs_refresh(request.job_id):
@@ -556,8 +595,7 @@ class AptitudeQuestionService:
         if current_size >= target_pool:
             return
 
-        missing = target_pool - current_size
-        generated_questions = self.generator.generate(request, missing)
+        generated_questions = self.generator.generate(request, target_pool)
         if not generated_questions:
             return
 

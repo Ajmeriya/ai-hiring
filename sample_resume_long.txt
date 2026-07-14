@@ -1,0 +1,6 @@
+John Doe
+Senior Software Engineer
+Skills: Java, Spring Boot, MySQL, REST APIs, Docker, FastAPI, React, TypeScript.
+Experience: 5 years building web applications and microservices.
+Projects: Hiring platform, resume parser, candidate tracking system.
+Education: BTech Computer Science.
